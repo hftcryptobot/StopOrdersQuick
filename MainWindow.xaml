@@ -1,0 +1,82 @@
+﻿<dx:ThemedWindow x:Class="QuikTester.MainWindow" mc:Ignorable="d" Title="Контоль позиций" Height="450" Width="800"
+    xmlns:dx="http://schemas.devexpress.com/winfx/2008/xaml/core"
+    xmlns:dxg="http://schemas.devexpress.com/winfx/2008/xaml/grid"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:local="clr-namespace:QuikTester"
+    xmlns:dxe="http://schemas.devexpress.com/winfx/2008/xaml/editors">
+    <Grid>
+
+        <Grid.RowDefinitions>
+            <RowDefinition Height="50" />
+            <RowDefinition Height="200" />
+            <RowDefinition />
+        </Grid.RowDefinitions>
+        
+        
+        <Button Content="Старт" Name="StartCheck" Grid.Row="0" HorizontalAlignment="Center" VerticalAlignment="Top" Height="55" Width="209" Click="StartCheck_Click" />
+        <!--<Button Content="PLace Test Stop" Name="GetCandles" Grid.Row="0"  Height="55" Width="209" Margin="0,0,500,10" Click="GetCandles_Click"/>-->
+
+        <dxg:GridControl Name="BotPositionsGrid" Margin="4,4,4,4" Grid.Row="1" AutoGenerateColumns="None">
+
+            <dxg:GridControl.SortInfo>
+                <dxg:GridSortInfo FieldName="Activated" SortOrder="Descending" />
+            </dxg:GridControl.SortInfo>
+            
+            <dxg:GridControl.View>
+                <dxg:TableView ShowSearchPanelMode="Never" ShowGroupPanel="False" ShowColumnHeaders="True" FontSize="14" VerticalScrollbarVisibility="Disabled" HorizontalScrollbarVisibility="Disabled" EnableImmediatePosting="true" ShowIndicator="False" EditorButtonShowMode="ShowAlways" AutoWidth="True" />
+            </dxg:GridControl.View>
+
+            <dxg:GridColumn FieldName="Activated" Width="30" />
+            <dxg:GridColumn FieldName="Started" Width="30" />
+
+            <dxg:GridColumn FieldName="Symbol" Width="50" />
+            <dxg:GridColumn FieldName="CurrentPos" Width="30" ReadOnly="True" />
+            <dxg:GridColumn FieldName="StrategyTypeString" Width="50" AllowEditing="True">
+
+                <dxg:GridColumn.EditSettings>
+                    <dxe:ComboBoxEditSettings Name="StrategyTypComboBoxEditSettings" />
+                </dxg:GridColumn.EditSettings>
+
+            </dxg:GridColumn>
+
+            <dxg:GridColumn FieldName="CurretPriceDelta" Width="50" />
+            <dxg:GridColumn FieldName="LastEmaValue" Width="50" />
+
+            <dxg:GridColumn FieldName="CandleIntervalString" Width="50" AllowEditing="True">
+                <dxg:GridColumn.EditSettings>
+                    <dxe:ComboBoxEditSettings Name="CandlesTypesComboBoxEditSettings" />
+                </dxg:GridColumn.EditSettings>
+
+            </dxg:GridColumn>
+            <dxg:GridColumn FieldName="EmaLength" Width="50" />
+
+            <dxg:GridColumn Header="*" Width="20">
+                <dxg:GridColumn.EditSettings>
+                    <dxe:ButtonEditSettings AllowDefaultButton="False">
+                        <dxe:ButtonEditSettings.Buttons>
+                            <dxe:ButtonInfo GlyphKind="Refresh" Content="-" Click="RefreshButton" />
+                        </dxe:ButtonEditSettings.Buttons>
+                    </dxe:ButtonEditSettings>
+                </dxg:GridColumn.EditSettings>
+            </dxg:GridColumn>
+
+
+            <!--
+            <dxg:GridColumn Header="*"  Width="20" >
+                <dxg:GridColumn.EditSettings  >
+                    <dxe:ButtonEditSettings  AllowDefaultButton="False" >
+                        <dxe:ButtonEditSettings.Buttons >
+                            <dxe:ButtonInfo GlyphKind="Edit" Name="EditBot" Content="-" Click="EditBot_Click" />
+                        </dxe:ButtonEditSettings.Buttons>
+                    </dxe:ButtonEditSettings>
+                </dxg:GridColumn.EditSettings>
+            </dxg:GridColumn>-->
+
+
+        </dxg:GridControl>
+        <TextBox Name="LogTextBox" Grid.Row="2" VerticalScrollBarVisibility="Visible" TextWrapping="Wrap" Text="" Margin="2,2,2,2" />
+    </Grid>
+</dx:ThemedWindow>
