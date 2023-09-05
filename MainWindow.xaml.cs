@@ -7,12 +7,15 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Timers;
 using System.Windows;
+using System.Windows.Media;
 using DevExpress.Xpf.Editors.Themes;
 using Ecng.ComponentModel;
 using QuikSharp;
 using QuikSharp.DataStructures;
+using QuikTester.Helpers;
 using StockSharp.Algo.Candles;
 using StockSharp.Algo.Indicators;
 
@@ -26,20 +29,18 @@ namespace QuikTester
     /// </summary>
     public partial class MainWindow : DevExpress.Xpf.Core.ThemedWindow
     {
-
-
-        ObservableCollection<PositionBot> positionBots = new ObservableCollection<PositionBot>();
+         ObservableCollection<PositionBot> _positionBots = new ObservableCollection<PositionBot>();
 
         // private ExponentialMovingAverage signallma;
-        private string _classcode = "TQBR";
-        private string _securityCode = "LKOH";
+        //private string _classcode = "TQBR";
+        //private string _securityCode = "LKOH";
 
 
-        private object objectlogger = new object();
-        string prevmessage = "";
-        private StreamWriter logger = new StreamWriter(DateTime.Now.ToString("dd_MM_yyyy") + ".txt", true);
+        private readonly object _objectlogger = new object();
+        string _prevLogmessage = "";
+        private readonly StreamWriter _logger = new StreamWriter(DateTime.Now.ToString("dd_MM_yyyy") + ".txt", true);
+
         QuikConnector QuikConnector { get; set; }
-
 
         private void SetUISettings()
         {
@@ -52,7 +53,6 @@ namespace QuikTester
             InitializeComponent();
 
 
-            
             SetUISettings();
 
             QuikConnector = new QuikConnector()
@@ -62,46 +62,81 @@ namespace QuikTester
 
             if (File.Exists(Helper.SettingsFile))
             {
-                positionBots = Helper.ReadXml<ObservableCollection<PositionBot>>();
+                _positionBots = Helper.ReadXml<ObservableCollection<PositionBot>>();
             }
 
-            BotPositionsGrid.ItemsSource = positionBots;
+            BotPositionsGrid.ItemsSource = _positionBots;
 
-            QuikConnector.PositionsUpdate += (positions) =>
+            var timer = new System.Timers.Timer(1000);
+            timer.Elapsed += (s, e) =>
             {
                 Application.Current.Dispatcher.BeginInvoke(new Action(() =>
                 {
 
-                    //создаем список ботов исходя из позиций.. 
-                    foreach (var pos in positions)
-                    {
-                        var bot = positionBots.FirstOrDefault(p => p.Symbol == pos.Key);
-                        if (bot == null)
-                            positionBots.Add(new PositionBot(QuikConnector) { Symbol = pos.Key, Activated = false, CurrentPos = pos.Value });
-                        else
-                        {
-                            if (bot.QuikConnector == null)
-                                bot.QuikConnector = QuikConnector;
+                    BotPositionsGrid.RefreshData();
+                }));
+            };
+            timer.Start();
 
-                            bot.UpdatePosition(pos.Value);
-                        }
+            QuikConnector.PositionsUpdate += (positions) =>
+            {
+
+                //создаем список ботов исходя из позиций.. 
+                foreach (var pos in positions)
+                {
+                    var bot = _positionBots.FirstOrDefault(p => p.Symbol == pos.Key);
+                    if (bot == null)
+                    {
+                        bot = new PositionBot(QuikConnector)
+                        {
+                            Symbol = pos.Key,
+                            Activated = false,
+
+                            CandleInterval = CandleInterval.H1,
+                            EmaLength = 10,
+                        };
+                        bot.LogAction += LogMessage;
+
+                        Application.Current.Dispatcher.BeginInvoke(new Action(() =>
+                        {
+                            //BotPositionsGrid.RefreshData();
+                            _positionBots.Add(bot);
+                        }));
+
+                    }
+                    else
+                    {
+                        if (bot.QuikConnector == null)
+                            bot.QuikConnector = QuikConnector;
+
+                        if (bot.LogAction == null)
+                            bot.LogAction += LogMessage;
+
+
                     }
 
-                    BotPositionsGrid.RefreshData();
+                    Application.Current.Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        bot.UpdateCalculationsAndPositions(pos.Value);
 
+                    }));
+                }
 
-                }));
+                Helper.SaveXml(_positionBots);
 
-                Helper.SaveXml(positionBots);
             };
             QuikConnector.LogAction += LogMessage;
-            QuikConnector.Connect();
+
+            new Thread(() => { QuikConnector.Connect(); }).Start();
 
         }
 
 
         protected override void OnClosing(CancelEventArgs e)
         {
+            //сохраняем настройки перед закрытием принудительно
+            Helper.SaveXml(_positionBots);
+
             LogMessage("Отключаемся от квика");
             if (QuikConnector == null)
             {
@@ -124,26 +159,7 @@ namespace QuikTester
            
         }
 
-        /*
-        /// <summary>
-        /// История свечек.
-        /// </summary>
-        /// <param name="sender"></param>
-        /// <param name="e"></param>
-        private void Button_Click_2(object sender, RoutedEventArgs e)
-        {
 
-            var candles = _quikconnector.Candles.GetAllCandles(_classcode, _securityCode, CandleInterval.H1).Result;
-            // var candles = _quikconnector.Candles.GetLastCandles("QJSIM","SBER",CandleInterval.M1,1).Result;
-           
-            foreach (var candle in candles)
-            {
-                LogMessage("история " + candle.Datetime.day + "|" + candle.Datetime.hour + ":" +
-                           candle.Datetime.min + " " + (double) candle.Close);
-            }
-
-        }
-        */
         
         public async void LogMessage(string message)
         {
@@ -151,12 +167,12 @@ namespace QuikTester
             try
             {
 
-                if (message == prevmessage) return;
+                if (message == _prevLogmessage) return;
 
                 var dt = DateTime.Now;
                 var datetime = dt.ToString("H:mm:ss.fff");
                 var logmessage = datetime + " | " + message;
-                prevmessage = message;
+                _prevLogmessage = message;
 
                 //Debug.WriteLine(message);
 
@@ -168,9 +184,9 @@ namespace QuikTester
 
                     }));
 
-                lock (objectlogger)
+                lock (_objectlogger)
                 {
-                    logger.WriteLine(logmessage);
+                    _logger.WriteLine(logmessage);
                 }
 
                 // logger.Close();
@@ -182,37 +198,40 @@ namespace QuikTester
 
         }
 
+        bool active = false;
         private void StartCheck_Click(object sender, RoutedEventArgs e)
         {
-
-        }
-
-        private void GetCandles_Click(object sender, RoutedEventArgs e)
-        {
-            //var candles = _quikconnector.Candles.GetAllCandles(_classcode, _securityCode, CandleInterval.M1).Result;
-            // Debug.WriteLine($"скользящая {signallma.GetValue(0)} Получено {_securityCode} свечек {candles.Count} . Последняя свечка {candles.Last().Close} время {((DateTime)candles.Last().Datetime)} ");
-
-            /*
-            STOPPRICE
-                SECCODE
-            PRICE
-            Quantity
-            StoporderType
-            Stopoperation = sell*/
-
-            /*
-            var stoporder = new StopOrder()
+            try
             {
-                ConditionPrice = 6650,
-                Price= 6650,
-                SecCode = _securityCode,
-                Quantity =1,
-                StopOrderType = StopOrderType.StopLimit,
-                Operation = Operation.Sell,
-            };
+                if (!active)
+                {
+                    active = true;
 
-            QuikConnector.PlaceStopOrder(stoporder);*/
+                    StartStopAll.Content = "Стоп";
+                    StartStopAll.Foreground = new BrushConverter().ConvertFromString("#FFFFBEBE") as SolidColorBrush;
 
+                    foreach (var bot in _positionBots)
+                    {
+                        bot.Start();
+                    }
+                }
+                else
+                {
+                    active = false;
+
+                    foreach (var bot in _positionBots)
+                    {
+                        bot.Stop();
+                    }
+
+                    StartStopAll.Content = "Старт";
+                    StartStopAll.Foreground = new BrushConverter().ConvertFromString("#a2e83e") as SolidColorBrush;
+                }
+            }
+            catch (Exception ex)
+            {
+                LogMessage(ex.Message);
+            }
         }
 
         private void RefreshButton(object sender, RoutedEventArgs e)

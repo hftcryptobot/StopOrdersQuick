@@ -16,7 +16,7 @@
         </Grid.RowDefinitions>
         
         
-        <Button Content="Старт" Name="StartCheck" Grid.Row="0" HorizontalAlignment="Center" VerticalAlignment="Top" Height="55" Width="209" Click="StartCheck_Click" />
+        <Button Content="Старт" Name="StartStopAll" Grid.Row="0"   Click="StartCheck_Click" />
         <!--<Button Content="PLace Test Stop" Name="GetCandles" Grid.Row="0"  Height="55" Width="209" Margin="0,0,500,10" Click="GetCandles_Click"/>-->
 
         <dxg:GridControl Name="BotPositionsGrid" Margin="4,4,4,4" Grid.Row="1" AutoGenerateColumns="None">
@@ -26,14 +26,38 @@
             </dxg:GridControl.SortInfo>
             
             <dxg:GridControl.View>
-                <dxg:TableView ShowSearchPanelMode="Never" ShowGroupPanel="False" ShowColumnHeaders="True" FontSize="14" VerticalScrollbarVisibility="Disabled" HorizontalScrollbarVisibility="Disabled" EnableImmediatePosting="true" ShowIndicator="False" EditorButtonShowMode="ShowAlways" AutoWidth="True" />
+                <dxg:TableView ShowSearchPanelMode="Never" ShowGroupPanel="False" ShowColumnHeaders="True" FontSize="14" VerticalScrollbarVisibility="Disabled" HorizontalScrollbarVisibility="Disabled" EnableImmediatePosting="true" ShowIndicator="False" EditorButtonShowMode="ShowAlways" AutoWidth="True" >
+
+                    <dxg:TableView.FormatConditions>
+                        <!--highlight the Value column if Value is less than 20-->
+
+                        <dxg:FormatCondition Expression="Contains([Direction], 'Sell')" FieldName="Direction">
+                            <dxg:Format Background="#FFF6540B" />
+                        </dxg:FormatCondition>
+
+                        <dxg:FormatCondition Expression="Contains([Direction], 'Buy')" FieldName="Direction">
+                            <dxg:Format Background="#FF099506" />
+                        </dxg:FormatCondition>
+
+                    </dxg:TableView.FormatConditions>
+
+                </dxg:TableView>
+
+
             </dxg:GridControl.View>
 
             <dxg:GridColumn FieldName="Activated" Width="30" />
             <dxg:GridColumn FieldName="Started" Width="30" />
 
             <dxg:GridColumn FieldName="Symbol" Width="50" />
-            <dxg:GridColumn FieldName="CurrentPos" Width="30" ReadOnly="True" />
+
+            <dxg:GridColumn FieldName="Direction" Width="50" ReadOnly="True"/>
+
+            <dxg:GridColumn FieldName="NewPos" Width="30" ReadOnly="True" >
+                <dxg:GridColumn.EditSettings>
+                    <dxe:TextEditSettings Mask="d" MaskType="Numeric" MaskUseAsDisplayFormat="True" />
+                </dxg:GridColumn.EditSettings>
+            </dxg:GridColumn>
             <dxg:GridColumn FieldName="StrategyTypeString" Width="50" AllowEditing="True">
 
                 <dxg:GridColumn.EditSettings>
@@ -42,8 +66,15 @@
 
             </dxg:GridColumn>
 
-            <dxg:GridColumn FieldName="CurretPriceDelta" Width="50" />
-            <dxg:GridColumn FieldName="LastEmaValue" Width="50" />
+            <dxg:GridColumn FieldName="Delta" Header="Дельта" Width="50" />
+            <dxg:GridColumn FieldName="Percent" Header="Процент" Width="50" >
+                <dxg:GridColumn.EditSettings>
+                    <dxe:TextEditSettings Mask="P" MaskType="Numeric" MaskUseAsDisplayFormat="True" />
+                </dxg:GridColumn.EditSettings>
+            </dxg:GridColumn>
+
+            <dxg:GridColumn FieldName="PriceDeltaNow" Header="PriceDelta"  Width="50"  ReadOnly="True" />
+            <dxg:GridColumn FieldName="EmaNowLocalEma" Header ="EMA" Width="50"  ReadOnly="True"/>
 
             <dxg:GridColumn FieldName="CandleIntervalString" Width="50" AllowEditing="True">
                 <dxg:GridColumn.EditSettings>

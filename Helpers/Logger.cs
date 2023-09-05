@@ -5,7 +5,7 @@ using System.Runtime.Serialization;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace QuikTester
+namespace QuikTester.Helpers
 {
     [DataContract]
     public abstract class Logger
@@ -14,7 +14,7 @@ namespace QuikTester
 
         public void LogMessage(string message)
         {
-            if(LogAction != null) LogAction(message);
+            if (LogAction != null) LogAction(message);
         }
 
     }

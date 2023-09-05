@@ -1,6 +1,6 @@
-﻿using DevExpress.Data.Utils;
-using QuikSharp;
+﻿using QuikSharp;
 using QuikSharp.DataStructures;
+using QuikTester.Helpers;
 using StockSharp.Algo.Indicators;
 using System;
 using System.Collections.Concurrent;
@@ -15,9 +15,11 @@ namespace QuikTester
 {
     public class QuikConnector : Logger
     {
-        private bool GetCandleHistoryOnce = true;
+
+
         bool firsttimeLoadForPositions = false;
         private Quik _quikconnector;
+
         /// <summary>
         /// строчка из классов нужня для метода по соответствию кода и класса
         /// адаптировал
@@ -28,17 +30,18 @@ namespace QuikTester
         /// Содержит все активные стоп заявки. При загрузке истории находит стопы с комментарием "bot"
         /// </summary>
         public ConcurrentDictionary<long, StopOrder> ActiveStopOrders = new ConcurrentDictionary<long, StopOrder>();
-        
+
         ConcurrentDictionary<string, decimal> ActivePositions = new ConcurrentDictionary<string, decimal>();
-        /// <summary>
-        /// Словарь который хранит значения для передвижения скользщек
-        /// ключ - инструмент
-        /// значение значение скользящей...
-        /// </summary>
-        ConcurrentDictionary<string, decimal> BuyEmaValues = new ConcurrentDictionary<string, decimal>();
+
 
         public Action Disconnected;
 
+        /// <summary>
+        /// Словарь который хранит в себе значения количества запятых для каждого инструмента
+        /// ключ - код инструмента
+        /// значение количество чисел после запятой
+        /// </summary>
+        public Dictionary<string, int> DecimalsWithInstrument = new Dictionary<string, int>();
 
         public void Connect()
         {
@@ -62,7 +65,7 @@ namespace QuikTester
                 GetStopOrders();
 
                 //2. включаем таймер который берет позиции по всем инструментам 
-                var timer = new Timer(1000);
+                var timer = new Timer(10000);
                 timer.Elapsed += (s, e) =>
                 {
                     if (!inprocess)
@@ -85,7 +88,7 @@ namespace QuikTester
         /// </summary>
         public Action<ConcurrentDictionary<string, decimal>> PositionsUpdate;
 
-        private void GetPositions()
+        private async void GetPositions()
         {
             inprocess = true;
 
@@ -95,12 +98,18 @@ namespace QuikTester
             var allposes = new ConcurrentDictionary<string, decimal>();
 
             //отправляет не все позиции (фьючерсове нет) берем T2
-            var stockPositions = _quikconnector.Trading.GetDepoLimits().Result.Where(s => s.LimitKindInt == 2);
-            foreach (var pos in stockPositions) { allposes.TryAdd(pos.SecCode, pos.CurrentBalance); }
+            var stockPositions = (await _quikconnector.Trading.GetDepoLimits()).Where(s => s.LimitKindInt == 2);
+            foreach (var pos in stockPositions)
+            {
+                allposes.TryAdd(pos.SecCode, pos.CurrentBalance);
+            }
 
             //фьючерсы 
-            var futPositions = _quikconnector.Trading.GetFuturesClientHoldings().Result;
-            foreach (var pos in futPositions) { allposes.TryAdd(pos.secCode, (decimal)pos.totalNet); }
+            var futPositions = await _quikconnector.Trading.GetFuturesClientHoldings();
+            foreach (var pos in futPositions)
+            {
+                allposes.TryAdd(pos.secCode, (decimal)pos.totalNet);
+            }
 
             foreach (var pos in allposes)
             {
@@ -128,7 +137,8 @@ namespace QuikTester
 
                     if (currentpos != 0 && currentpos != previouspos)
                     {
-                        LogMessage($"Зафиксировано изменение позиции {sec} прошлая поза = {previouspos} новая поза = {currentpos}");
+                        LogMessage(
+                            $"Зафиксировано изменение позиции {sec} прошлая поза = {previouspos} новая поза = {currentpos}");
                         ActivePositions[sec] = currentpos;
                     }
 
@@ -144,46 +154,44 @@ namespace QuikTester
             PositionsUpdate?.Invoke(ActivePositions);
 
 
-            Debug.WriteLine($"-------------------");
-
-
-            GetCandelHistoryForActivePositions();
-
-
-            Debug.WriteLine($"-------------------");
-
             firsttimeLoadForPositions = false;
             inprocess = false;
         }
 
         private void StopOrders_NewStopOrder(StopOrder stop)
         {
-            LogMessage($"{stop.SecCode} обновление стоп {stop.ConditionPrice} направление {stop.Operation} номер {stop.OrderNum} {stop.State}");
+            LogMessage(
+                $"{stop.SecCode} обновление стоп {stop.ConditionPrice} направление {stop.Operation} номер {stop.OrderNum} {stop.State}");
             UpdateStopOrderState(stop);
         }
+
         public string Account { get; set; }
 
-        public void PlaceStopOrder(decimal price, int quantity, Operation direction, string seccode, int roundNumbers)
+        public void PlaceStopOrder(decimal ConditionalPrice, int quantity, Operation direction, string seccode, int roundNumbers)
         {
-            /*    
-            {
-               ConditionPrice = 6650,
-                Price= 6650,
-                SecCode = _securityCode,
-                Quantity =1,
-                StopOrderType = StopOrderType.StopLimit,
-                Operation = Operation.Sell,
-               
-            };*/
 
             decimal marketslippage = 0.1m;
-            var marketprice = Math.Round(direction == Operation.Buy ? price * (1+ marketslippage) : price * (1- marketslippage), roundNumbers);
+
+            var marketprice =
+                Math.Round(direction == Operation.Sell ? ConditionalPrice * (1 - marketslippage) : ConditionalPrice * (1 + marketslippage),
+                    roundNumbers);
+
+            
+
+            Char separator = System.Globalization.CultureInfo.CurrentCulture.NumberFormat.NumberDecimalSeparator[0];
+            var priceStep = Convert.ToDecimal(_quikconnector.Trading.GetParamEx(GetClassCodeForInsturment(seccode), seccode, "SEC_PRICE_STEP").Result.ParamValue.Replace('.', separator));
+            
+            if(priceStep!=0)
+            {
+            var rest = marketprice % priceStep;
+            marketprice -= rest;
+            }
 
             var stopOrder = new StopOrder()
             {
-                ConditionPrice = price,
+                ConditionPrice = ConditionalPrice,
                 Price = marketprice,
-                SecCode= seccode,
+                SecCode = seccode,
                 Quantity = quantity,
                 StopOrderType = StopOrderType.StopLimit,
                 Operation = direction,
@@ -192,6 +200,7 @@ namespace QuikTester
             stopOrder.Account = Account;
             stopOrder.ClassCode = GetClassCodeForInsturment(stopOrder.SecCode);
 
+            Debug.WriteLine($"Выставляем стоп {direction} Цена условия {ConditionalPrice} Цена срабатывания {marketprice}");
 
             _quikconnector.StopOrders.CreateStopOrder(stopOrder);
         }
@@ -200,7 +209,7 @@ namespace QuikTester
         {
             _quikconnector.StopOrders.KillStopOrder(stopOrder);
         }
-    
+
 
 
         private void UpdateStopOrderState(StopOrder stop)
@@ -210,7 +219,8 @@ namespace QuikTester
             {
                 if (!ActiveStopOrders.ContainsKey(stop.OrderNum))
                 {
-                    LogMessage($"{stop.SecCode} Добавление нового стоп ордера {stop.ConditionPrice} направление {stop.Operation} номер {stop.OrderNum} {stop.State}");
+                    LogMessage(
+                        $"{stop.SecCode} Добавление нового стоп ордера {stop.ConditionPrice} направление {stop.Operation} номер {stop.OrderNum} {stop.State}");
                     ActiveStopOrders.TryAdd(stop.OrderNum, stop);
                 }
                 //OrderNum 
@@ -221,45 +231,10 @@ namespace QuikTester
 
                 if (ActiveStopOrders.Remove(stop.OrderNum, out var deletedStopOrder))
                 {
-                    LogMessage($"{stop.SecCode} Стоп удален {stop.ConditionPrice} направление {stop.Operation} номер {stop.OrderNum} {stop.State}");
+                    LogMessage(
+                        $"{stop.SecCode} Стоп удален {stop.ConditionPrice} направление {stop.Operation} номер {stop.OrderNum} {stop.State}");
                 }
             }
-        }
-
-        private void GetCandelHistoryForActivePositions()
-        {
-            //pos.key = код инструмента
-            foreach (var pos in ActivePositions)
-            {
-                if (pos.Value != 0)
-                {
-                    var candles = _quikconnector.Candles.GetAllCandles(GetClassCodeForInsturment(pos.Key), pos.Key, CandleInterval.M1).Result;
-
-                    //каждый раз создаем новую скользяшку и считаем 
-                    var signalEma = new ExponentialMovingAverage() { Length = 10 };
-
-                    //постоянно без последней свечки, потому что она всегда будет не законченной
-                    for (int i = 0; i < candles.Count - 1; i++)
-                    {
-                        signalEma.Process(candles[i].Close, true);
-                        //Debug.WriteLine("история " + candle.Datetime.day + "|" + candle.Datetime.hour + ":" + candle.Datetime.min + " " + (double)candle.Close);
-                    }
-
-                    //навправление покупки
-                    if (pos.Value > 0)
-                    {
-                        //в первый раз добавляем 
-                        if (BuyEmaValues.ContainsKey(pos.Key))
-                        {
-
-                        }
-                    }
-
-
-                    Debug.WriteLine($"скользящая {signalEma.GetValue(0)} Получено {pos.Key} свечек {candles.Count} . Последняя свечка {candles.Last().Close} время {((DateTime)candles.Last().Datetime)} ");
-                }
-            }
-
         }
 
         /// <summary>
@@ -272,24 +247,31 @@ namespace QuikTester
         /// <param name="posbot"></param>
         /// <param name="ema"></param>
         /// <returns></returns>
-        public async Task<decimal> GetEmaValueOrLastPrice(PositionBot posbot,bool ema =true, CandleInterval candleInterval = CandleInterval.D1, int _length = 0)
+        public async Task<decimal> GetEmaValueOrLastPrice(PositionBot posbot, bool ema = true,
+            CandleInterval candleInterval = CandleInterval.D1, int _length = 0)
         {
-            
 
-            var candles = await _quikconnector.Candles.GetAllCandles(GetClassCodeForInsturment(posbot.Symbol), posbot.Symbol, candleInterval);
+
+            var candles = await _quikconnector.Candles.GetAllCandles(GetClassCodeForInsturment(posbot.Symbol),
+                posbot.Symbol, candleInterval);
+
+            //вместе с этим запросом сразу обновляем количество чисел после запятой
+            if (DecimalsWithInstrument.ContainsKey(posbot.Symbol))
+                DecimalsWithInstrument[posbot.Symbol] = getDecimalCount(candles[0].Close);
+            else DecimalsWithInstrument.Add(posbot.Symbol, getDecimalCount(candles[0].Close));
 
             if (ema)
             {
                 //каждый раз создаем новую скользяшку и считаем 
                 var signalEma = new ExponentialMovingAverage() { Length = _length };
 
+               
                 //постоянно без последней свечки, потому что она всегда будет не законченной
                 for (int i = 0; i < candles.Count - 1; i++)
                 {
                     signalEma.Process(candles[i].Close, true);
                     //Debug.WriteLine("история " + candle.Datetime.day + "|" + candle.Datetime.hour + ":" + candle.Datetime.min + " " + (double)candle.Close);
                 }
-
 
                 return signalEma.GetValue(0);
             }
@@ -306,12 +288,13 @@ namespace QuikTester
         /// </summary>
         private void GetStopOrders()
         {
-            var stoporders = _quikconnector.StopOrders.GetStopOrders().Result.Where(s => s.Comment.Contains("bot")) ;
+            var stoporders = _quikconnector.StopOrders.GetStopOrders().Result.Where(s => s.Comment.Contains("bot"));
 
             if (stoporders != null)
                 foreach (var stop in stoporders)
                 {
-                    LogMessage($"{stop.SecCode} стоп история {stop.ConditionPrice} направление {stop.Operation} номер {stop.OrderNum} {stop.State}");
+                    LogMessage(
+                        $"{stop.SecCode} стоп история {stop.ConditionPrice} направление {stop.Operation} номер {stop.OrderNum} {stop.State}");
                     UpdateStopOrderState(stop);
                     //добавляем наши стопчики 
 
@@ -319,25 +302,7 @@ namespace QuikTester
         }
 
 
-        /*
-            private void SubscribeForCandles()
-            {
-                _quikconnector.Candles.NewCandle += candle =>
-                {
-                    Debug.WriteLine($"Свечка {_securityCode} "+ candle.Datetime.day + "|" + candle.Datetime.hour  + ":" + candle.Datetime.min + " " + candle.Close);
-                    //logger.WriteLine(candle.Datetime.day + "|" + candle.Datetime.hour  + ":" + candle.Datetime.min + " " + candle.Close);
-                };
-
-                var subscribe = _quikconnector.Candles.Subscribe(_classcode, _securityCode, CandleInterval.M1);
-                subscribe.Wait();
-
-                if (_quikconnector.Candles.IsSubscribed(_classcode, _securityCode, CandleInterval.M1).Result)
-                {
-                    LogMessage("Свечки подписались");
-                }
-            }*/
-
-            public void Stop()
+        public void Stop()
         {
             if (_quikconnector != null)
             {
@@ -351,8 +316,6 @@ namespace QuikTester
             }
 
         }
-
-
 
         #region Helpers
 
@@ -385,14 +348,13 @@ namespace QuikTester
 
             stringclasses.Remove(0);
         }
+
         private string GetClassCodeForInsturment(string code)
         {
             return _quikconnector.Class.GetSecurityClass(stringclasses, code).Result;
         }
 
         #endregion
-
-
 
 
     }

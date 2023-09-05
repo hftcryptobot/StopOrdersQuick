@@ -1,14 +1,13 @@
-﻿using DevExpress.Data.Utils;
-using QuikSharp.DataStructures;
-using StockSharp.Algo.Indicators;
-using StockSharp.BusinessEntities;
+﻿using QuikSharp.DataStructures;
+using QuikTester.Helpers;
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Runtime.Serialization;
-using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
-using System.Windows.Forms;
 
 namespace QuikTester
 {
@@ -24,28 +23,101 @@ namespace QuikTester
     }
 
     [DataContract]
-    public  class PositionBot: Logger
+    public class PositionBot : Logger, INotifyPropertyChanged
     {
         private Operation prevDirection;
+
+        private decimal _priceDeltaNow;
 
         /// <summary>
         /// высчитанный уровень в зависимости от направления 
         /// </summary>
-        public  decimal PriceDeltaNow { get; set; }
+        public decimal PriceDeltaNow { get; set; }
 
-        [DataMember]
-        public string Symbol { get; set; }
 
-        public decimal CurrentPos { get; set; }
-        [DataMember]
-        public bool Activated { get; set; }
+        private decimal _emanowLocalEma;
+
+        /// <summary>
+        /// EMA на текущий момент
+        /// </summary>
+        public decimal EmaNowLocalEma
+        {
+            get => _emanowLocalEma;
+            set
+            {
+                _emanowLocalEma = value;
+                PropertyEvent(nameof(EmaNowLocalEma));
+            }
+        }
+
+        [DataMember] public string Symbol { get; set; }
+
+        private decimal _currentpos;
+
+        public decimal CurrentPos
+        {
+            get => _currentpos;
+            set
+            {
+                _currentpos = value;
+                PropertyEvent(nameof(CurrentPos));
+            }
+        }
+
+        private decimal _newPos;
+
+        public decimal NewPos
+        {
+            get => _newPos;
+            set
+            {
+                _newPos = value;
+                PropertyEvent(nameof(NewPos));
+            }
+        }
+
+        [DataMember] public bool Activated { get; set; }
 
         public QuikConnector QuikConnector { get; set; }
 
-        [DataMember]
-        public StrategyType StrategyType { get; set; }
 
-        public bool Started { get; set; } = false;
+
+        private StrategyType _strategyType;
+
+        [DataMember]
+        public StrategyType StrategyType
+        {
+            get => _strategyType;
+            set
+            {
+                //cтратегия поменялась...
+                if (_strategyType != value &&  QuikConnector != null)
+                {
+                    UpdateCalculationsAndPositions(NewPos);
+                }
+
+                _strategyType = value;
+                
+            }
+        }
+
+        private bool _started;
+
+        public bool Started
+        {
+            get => _started;
+            set
+            {
+                //поменялось состояние стратегии
+                if (_started != value && value == true && QuikConnector!=null)
+                {
+                    UpdateCalculationsAndPositions(NewPos);
+                }
+
+                _started = value;
+            }
+        }
+
         public string StrategyTypeString
         {
             get => StrategyType.ToString();
@@ -58,24 +130,50 @@ namespace QuikTester
 
         /*------- три типа стратегии и их свойства-----*/
 
-        [DataMember]
-        public decimal LastEmaValue { get; set; }
+        [DataMember] public decimal LastEmaValue { get; set; }
         public decimal LastPrice { get; private set; }
+
+
+        private decimal _delta;
 
         /// <summary>
         /// Дельта для высчитывания в пунтках
         /// </summary>
         [DataMember]
-        public decimal Delta { get; set; }
+        public decimal Delta
+        {
+            get => _delta;
+            set
+            {
+                _delta = value;
+                UpdateUsualDelta();
+                PropertyEvent(nameof(Delta));
+            }
+        }
+
+        private decimal _percent;
 
         /// <summary>
         /// Процентное значение
         /// указывается в реальных процентах
         /// </summary>
         [DataMember]
-        public decimal Percent { get; set; }
+        public decimal Percent
+        {
+            get => _percent;
+            set
+            {
+                _percent = value;
 
-        /// <summary>
+                UpdateDeltaPercent();
+
+                PropertyEvent(nameof(Percent));
+
+            }
+        }
+
+
+    /// <summary>
         /// Цена "отступа" в процентах или в реальном значении... зависит от настроек типа стратегии
         /// </summary>
         public decimal CurretPriceDelta { get;set;
@@ -121,100 +219,146 @@ namespace QuikTester
             QuikConnector = quikConnector;
         }
 
-        public async void UpdatePosition(decimal newPos)
+        private void UpdateDeltaPercent()
         {
-            if (newPos > 0) Direction = Operation.Buy;
-            if (newPos < 0) Direction = Operation.Sell;
+            if (LastPrice != 0)
 
+                PriceDeltaNow = Math.Round(Direction == Operation.Buy
+                    ? LastPrice * (1 - Percent / 100)
+                    : (1 + Percent / 100), QuikConnector.getDecimalCount(LastPrice));
+        }
 
-            if (Activated && Started)
+        private void UpdateUsualDelta()
+        {
+            if (LastPrice != 0)
+                PriceDeltaNow = Math.Round(Direction == Operation.Buy ? 
+                    LastPrice - Delta : LastPrice + Delta, QuikConnector.getDecimalCount(LastPrice));
+        }
+
+        public Operation OppositeDirection => Direction == Operation.Buy ? Operation.Sell : Operation.Buy;
+        public async void UpdateCalculationsAndPositions(decimal newPos)
+        {
+            //для быстрого обновления графики 
+            NewPos = newPos;
+
+            if (NewPos > 0) Direction = Operation.Buy;
+            if (NewPos < 0) Direction = Operation.Sell;
+
+            //приходится делать новый поток потому что получение свечек в квике все равно выполняется синхронно
+            //из-за этого грузит графику.
+
+            new Task(async () =>
             {
+                
+                //----------- решил сделать калькуляцию параметров вне зависимости от того запущена или нет ----- 
 
-                //Произошло закрытие позиции...
-                if (newPos == 0 && newPos != CurrentPos)
+                if (StrategyType == StrategyType.ValueDiff)
                 {
-                    LogMessage("Позиция обнулилась. Отменяем стоп ордер ");
-                    TryToFindAndCancelStopOrder();
+                    LastPrice = await QuikConnector.GetEmaValueOrLastPrice(posbot: this, ema: false);
+
+                    UpdateUsualDelta();
+
+                    LogMessage($" {Symbol} Последняя цена {LastPrice} price Delta {PriceDeltaNow}");
                 }
 
-                /*----------- решил сделать калькуляцию параметров вне зависимости от того запущена или нет ----- */ 
+                if (StrategyType == StrategyType.Percent)
+                {
+                    LastPrice = await  QuikConnector.GetEmaValueOrLastPrice(posbot: this, ema: false);
+
+                    UpdateDeltaPercent();
+
+                    LogMessage($" {Symbol} Последняя цена {LastPrice} price Delta {PriceDeltaNow}");
+                }
+
+                if (StrategyType == StrategyType.Ema)
+                {
+                    EmaNowLocalEma =
+                        Math.Round(await QuikConnector.GetEmaValueOrLastPrice(this, true, CandleInterval, EmaLength),
+                            QuikConnector.DecimalsWithInstrument[Symbol]);
+
+                    LogMessage($"{Symbol} Скользяшка {EmaNowLocalEma} ");
+                }
 
 
-                /*--------------------------------------------------------------------------------------------------*/
+                //--------------------------------------------------------------------------------------------------
 
-                if (newPos != 0)
+                if (Activated && Started)
                 {
 
-                    if (StrategyType == StrategyType.Percent || StrategyType == StrategyType.ValueDiff)
+                    //Произошло закрытие позиции...
+                    if (NewPos == 0 && NewPos != CurrentPos)
                     {
-                        LastPrice = await QuikConnector.GetEmaValueOrLastPrice(posbot: this, ema: false);
+                        LogMessage("Позиция обнулилась. Отменяем стоп ордер ");
+                        TryToFindAndCancelStopOrder();
+                    }
 
-                        if (StrategyType == StrategyType.ValueDiff)
-                            PriceDeltaNow = Direction == Operation.Buy ? LastPrice - Delta : LastPrice + Delta;
-                        else
-                            PriceDeltaNow = Direction == Operation.Buy
-                                ? LastPrice * (1 - Percent / 100)
-                                : (1 + Percent / 100);
+                    if (NewPos != 0)
+                    {
 
-                        //сменилось направление или с самого нуля стартуем
-                        if ((CurretPriceDelta == 0 /*& newPos != 0*/) || prevDirection != Direction)
+                        if (StrategyType == StrategyType.Percent || StrategyType == StrategyType.ValueDiff)
                         {
-                            LogMessage(
-                                $"{Symbol} Первый стоп или изменение направления. Отменя и выставляем новый. Направление {Direction} цена = {PriceDeltaNow} ");
-                            CurretPriceDelta = PriceDeltaNow;
-                            CancelAndPlaceNewStopOrder(CurretPriceDelta, (int)newPos, Direction,
-                                QuikConnector.getDecimalCount(LastPrice));
-                        }
+                            
 
-                        if (CurretPriceDelta != 0 /*&& newPos != 0*/ && prevDirection == Direction)
-                        {
-                            if ((Direction == Operation.Buy && PriceDeltaNow > CurretPriceDelta) ||
-                                (Direction == Operation.Sell && PriceDeltaNow < CurretPriceDelta))
+                            //сменилось направление или с самого нуля стартуем
+                            if ((CurretPriceDelta == 0) || prevDirection != Direction)
                             {
                                 LogMessage(
-                                    $"Уровень изменился. Новый ={PriceDeltaNow} Старый = {CurretPriceDelta}. Направление {Direction}");
+                                    $"{Symbol} Первый стоп или изменение направления. Отменя и выставляем новый. Направление {Direction} цена = {PriceDeltaNow} ");
                                 CurretPriceDelta = PriceDeltaNow;
-                                CancelAndPlaceNewStopOrder(CurretPriceDelta, (int)newPos, Direction,
+                                CancelAndPlaceNewStopOrder(CurretPriceDelta, (int)NewPos, OppositeDirection,
                                     QuikConnector.getDecimalCount(LastPrice));
                             }
+
+                            if (CurretPriceDelta != 0 && prevDirection == Direction)
+                            {
+                                if ((Direction == Operation.Buy && PriceDeltaNow > CurretPriceDelta) ||
+                                    (Direction == Operation.Sell && PriceDeltaNow < CurretPriceDelta))
+                                {
+                                    LogMessage(
+                                        $"Уровень изменился. Новый ={PriceDeltaNow} Старый = {CurretPriceDelta}. Направление {Direction}");
+
+                                    CurretPriceDelta = PriceDeltaNow;
+
+                                    CancelAndPlaceNewStopOrder(CurretPriceDelta, (int)NewPos, OppositeDirection,
+                                        QuikConnector.getDecimalCount(LastPrice));
+                                }
+                            }
+
                         }
-
-                    }
-                    else
-                    {
-                        var localEMA = QuikConnector.GetEmaValueOrLastPrice(this, true, CandleInterval, EmaLength)
-                            .Result;
-
-                        //сменилось направление или с самого нуля стартуем
-                        if (LastEmaValue == 0 || prevDirection != Direction)
+                        else
                         {
-                            LogMessage(
-                                $"{Symbol} Первый стоп или изменение направления. Отменя и выставляем новый. Направление {Direction} цена = {localEMA} ");
-                            LastEmaValue = localEMA;
-                            //todo - заменить нулевые значения. Добавить в основной коннектор количество чисел после запятой
-                            CancelAndPlaceNewStopOrder(LastEmaValue, (int)newPos, Direction, 0);
-                        }
-
-                        if (LastEmaValue != 0 /*&& newPos != 0*/ && prevDirection == Direction)
-                        {
-                            if ((Direction == Operation.Buy && localEMA > LastEmaValue) ||
-                                (Direction == Operation.Sell && LastEmaValue < LastEmaValue))
+                            //сменилось направление или с самого нуля стартуем
+                            if (LastEmaValue == 0 || prevDirection != Direction)
                             {
                                 LogMessage(
-                                    $"Уровень EMA изменился. Новый ={localEMA} Старый = {LastEmaValue}. Направление {Direction}");
-                                LastEmaValue = localEMA;
-                                CancelAndPlaceNewStopOrder(LastEmaValue, (int)newPos, Direction,
-                                    QuikConnector.getDecimalCount(LastPrice));
+                                    $"{Symbol} Первый стоп или изменение направления. Отменя и выставляем новый. Направление {Direction} цена = {EmaNowLocalEma} ");
+                                LastEmaValue = EmaNowLocalEma;
+                                //todo - заменить нулевые значения. Добавить в основной коннектор количество чисел после запятой
+                                CancelAndPlaceNewStopOrder(LastEmaValue, (int)NewPos, Direction, QuikConnector.DecimalsWithInstrument[Symbol]);
                             }
-                        }
 
+                            if (LastEmaValue != 0 && prevDirection == Direction)
+                            {
+                                if ((Direction == Operation.Buy && EmaNowLocalEma > LastEmaValue) ||
+                                    (Direction == Operation.Sell && LastEmaValue < LastEmaValue))
+                                {
+                                    LogMessage(
+                                        $"Уровень EMA изменился. Новый ={EmaNowLocalEma} Старый = {LastEmaValue}. Направление {Direction}");
+                                    LastEmaValue = EmaNowLocalEma;
+
+                                    CancelAndPlaceNewStopOrder(LastEmaValue, (int)NewPos, OppositeDirection,
+                                        QuikConnector.DecimalsWithInstrument[Symbol]);
+                                }
+                            }
+
+                        }
                     }
                 }
-            }
 
-            CurrentPos = newPos;
-            prevDirection = Direction;
-            
+                CurrentPos = NewPos;
+                prevDirection = Direction;
+
+           }).Start();
         }
 
         // QuikConnector.PlaceStopOrder(PriceDelta, (int)newPos, Direction, Symbol, QuikConnector.getDecimalCount(LastPrice));
@@ -249,6 +393,17 @@ namespace QuikTester
             Started = false;
         }
 
+
+        public event PropertyChangedEventHandler PropertyChanged;
+
+        protected virtual void OnPropertyChanged([CallerMemberName] string propertyName = null)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        }
+        public void PropertyEvent(string _property)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(_property));
+        }
 
     }
 }
