@@ -50,7 +50,15 @@ namespace QuikTester
             }
         }
 
-        [DataMember] public string Symbol { get; set; }
+        //[DataMember] 
+        //public string SymbolWithPortfolio { get; set; }
+
+        [DataMember]
+        public string Symbol { get; set; }
+
+        [DataMember]
+        public string Portfolio { get; set; }
+
 
         private decimal _currentpos;
 
@@ -79,6 +87,10 @@ namespace QuikTester
         [DataMember] public bool Activated { get; set; }
 
         public QuikConnector QuikConnector { get; set; }
+
+        public decimal ?PriceStep { get; set; }
+
+        public string ?classCode { get; set; }
 
 
 
@@ -109,9 +121,14 @@ namespace QuikTester
             set
             {
                 //поменялось состояние стратегии
-                if (_started != value && value == true && QuikConnector!=null)
+                //  if (_started != value && value == true && QuikConnector!=null)
+                // {
+                //      UpdateCalculationsAndPositions(NewPos);
+                //  }
+
+                if (_started != value && value)
                 {
-                    UpdateCalculationsAndPositions(NewPos);
+                    MainAlgo();
                 }
 
                 _started = value;
@@ -238,6 +255,9 @@ namespace QuikTester
         public Operation OppositeDirection => Direction == Operation.Buy ? Operation.Sell : Operation.Buy;
         public async void UpdateCalculationsAndPositions(decimal newPos)
         {
+
+           
+
             //для быстрого обновления графики 
             NewPos = newPos;
 
@@ -249,7 +269,19 @@ namespace QuikTester
 
             new Task(async () =>
             {
-                
+
+                if (PriceStep == null)
+                {
+                    PriceStep = QuikConnector.GetPriceStep(Symbol);
+                    LogMessage($"Получен шаг цены для {Symbol} -> {PriceStep}");
+                }
+
+                if (classCode == null)
+                {
+                    classCode = QuikConnector.GetClassCodeForInsturment(Symbol);
+                    LogMessage($"Получен класс инструмента для {Symbol} -> {classCode}");
+                }
+
                 //----------- решил сделать калькуляцию параметров вне зависимости от того запущена или нет ----- 
 
                 if (StrategyType == StrategyType.ValueDiff)
@@ -258,7 +290,7 @@ namespace QuikTester
 
                     UpdateUsualDelta();
 
-                    LogMessage($" {Symbol} Последняя цена {LastPrice} price Delta {PriceDeltaNow}");
+                   // LogMessage($" {SymbolWithPortfolio} Последняя цена {LastPrice} price Delta {PriceDeltaNow}");
                 }
 
                 if (StrategyType == StrategyType.Percent)
@@ -267,7 +299,7 @@ namespace QuikTester
 
                     UpdateDeltaPercent();
 
-                    LogMessage($" {Symbol} Последняя цена {LastPrice} price Delta {PriceDeltaNow}");
+                   // LogMessage($" {SymbolWithPortfolio} Последняя цена {LastPrice} price Delta {PriceDeltaNow}");
                 }
 
                 if (StrategyType == StrategyType.Ema)
@@ -276,84 +308,13 @@ namespace QuikTester
                         Math.Round(await QuikConnector.GetEmaValueOrLastPrice(this, true, CandleInterval, EmaLength),
                             QuikConnector.DecimalsWithInstrument[Symbol]);
 
-                    LogMessage($"{Symbol} Скользяшка {EmaNowLocalEma} ");
+                    //LogMessage($"{SymbolWithPortfolio} Скользяшка {EmaNowLocalEma} ");
                 }
 
 
-                //--------------------------------------------------------------------------------------------------
-
-                if (Activated && Started)
-                {
-
-                    //Произошло закрытие позиции...
-                    if (NewPos == 0 && NewPos != CurrentPos)
-                    {
-                        LogMessage("Позиция обнулилась. Отменяем стоп ордер ");
-                        TryToFindAndCancelStopOrder();
-                    }
-
-                    if (NewPos != 0)
-                    {
-
-                        if (StrategyType == StrategyType.Percent || StrategyType == StrategyType.ValueDiff)
-                        {
-                            
-
-                            //сменилось направление или с самого нуля стартуем
-                            if ((CurretPriceDelta == 0) || prevDirection != Direction)
-                            {
-                                LogMessage(
-                                    $"{Symbol} Первый стоп или изменение направления. Отменя и выставляем новый. Направление {Direction} цена = {PriceDeltaNow} ");
-                                CurretPriceDelta = PriceDeltaNow;
-                                CancelAndPlaceNewStopOrder(CurretPriceDelta, (int)NewPos, OppositeDirection,
-                                    QuikConnector.getDecimalCount(LastPrice));
-                            }
-
-                            if (CurretPriceDelta != 0 && prevDirection == Direction)
-                            {
-                                if ((Direction == Operation.Buy && PriceDeltaNow > CurretPriceDelta) ||
-                                    (Direction == Operation.Sell && PriceDeltaNow < CurretPriceDelta))
-                                {
-                                    LogMessage(
-                                        $"Уровень изменился. Новый ={PriceDeltaNow} Старый = {CurretPriceDelta}. Направление {Direction}");
-
-                                    CurretPriceDelta = PriceDeltaNow;
-
-                                    CancelAndPlaceNewStopOrder(CurretPriceDelta, (int)NewPos, OppositeDirection,
-                                        QuikConnector.getDecimalCount(LastPrice));
-                                }
-                            }
-
-                        }
-                        else
-                        {
-                            //сменилось направление или с самого нуля стартуем
-                            if (LastEmaValue == 0 || prevDirection != Direction)
-                            {
-                                LogMessage(
-                                    $"{Symbol} Первый стоп или изменение направления. Отменя и выставляем новый. Направление {Direction} цена = {EmaNowLocalEma} ");
-                                LastEmaValue = EmaNowLocalEma;
-                                //todo - заменить нулевые значения. Добавить в основной коннектор количество чисел после запятой
-                                CancelAndPlaceNewStopOrder(LastEmaValue, (int)NewPos, Direction, QuikConnector.DecimalsWithInstrument[Symbol]);
-                            }
-
-                            if (LastEmaValue != 0 && prevDirection == Direction)
-                            {
-                                if ((Direction == Operation.Buy && EmaNowLocalEma > LastEmaValue) ||
-                                    (Direction == Operation.Sell && LastEmaValue < LastEmaValue))
-                                {
-                                    LogMessage(
-                                        $"Уровень EMA изменился. Новый ={EmaNowLocalEma} Старый = {LastEmaValue}. Направление {Direction}");
-                                    LastEmaValue = EmaNowLocalEma;
-
-                                    CancelAndPlaceNewStopOrder(LastEmaValue, (int)NewPos, OppositeDirection,
-                                        QuikConnector.DecimalsWithInstrument[Symbol]);
-                                }
-                            }
-
-                        }
-                    }
-                }
+            //--------------------------------------------------------------------------------------------------
+            if (Activated && Started)
+                MainAlgo();
 
                 CurrentPos = NewPos;
                 prevDirection = Direction;
@@ -361,20 +322,123 @@ namespace QuikTester
            }).Start();
         }
 
-        // QuikConnector.PlaceStopOrder(PriceDelta, (int)newPos, Direction, Symbol, QuikConnector.getDecimalCount(LastPrice));
-        private void CancelAndPlaceNewStopOrder(decimal price, int quantity, Operation operation,int numberRound)
+        private void MainAlgo()
         {
+
+            new Task(async () =>
+            {
+
+                //заняты выставлением стопа в настоящий момент
+                if(stopplacingprocess)
+                    return;
+
+                //Произошло закрытие позиции...
+                if (NewPos == 0 && NewPos != CurrentPos)
+                {
+                    LogMessage("Позиция обнулилась. Отменяем стоп ордер ");
+                    TryToFindAndCancelStopOrder();
+                }
+
+                if (NewPos != 0)
+                {
+                    var stoporder = QuikConnector
+                        .ActiveStopOrders
+                        .FirstOrDefault(s => s.Value.SecCode == Symbol && s.Value.ClientCode == Portfolio).Value;
+
+                    if (StrategyType == StrategyType.Percent || StrategyType == StrategyType.ValueDiff)
+                    {
+
+                        /*
+                        //сменилось направление или с самого нуля стартуем
+                        if ((CurretPriceDelta == 0) || prevDirection != Direction)
+                        {
+                            LogMessage(
+                                $"{Symbol} Первый стоп или изменение направления. Отменя и выставляем новый. Направление {Direction} цена = {PriceDeltaNow} ");
+                            CurretPriceDelta = PriceDeltaNow;
+                            CancelAndPlaceNewStopOrder(CurretPriceDelta, (int)NewPos, OppositeDirection,
+                                QuikConnector.getDecimalCount(LastPrice), Portfolio);
+                        }*/
+
+                        //if (CurretPriceDelta != 0 && prevDirection == Direction || stoporder == null)
+                        if(PriceDeltaNow!=0)
+                        {
+                            if ((Direction == Operation.Buy && PriceDeltaNow > CurretPriceDelta) ||
+                                (Direction == Operation.Sell && PriceDeltaNow < CurretPriceDelta) || stoporder == null)
+                            {
+                                LogMessage(
+                                    $"Выставляю стоп Новый ={PriceDeltaNow} Старый = {CurretPriceDelta}. Направление {Direction}");
+
+                                CurretPriceDelta = PriceDeltaNow;
+
+                                await CancelAndPlaceNewStopOrder(CurretPriceDelta, (int)NewPos, OppositeDirection,
+                                    QuikConnector.getDecimalCount(LastPrice), Portfolio);
+                            }
+                        }
+
+                    }
+                    else
+                    {
+                        if (EmaNowLocalEma == 0)
+                        {
+                            LogMessage("Значение индикатора 0 ");
+                            return;
+                        }
+
+                        /*
+                        //сменилось направление или с самого нуля стартуем
+                        if (LastEmaValue == 0 || prevDirection != Direction)
+                        {
+                            LogMessage(
+                                $"{Symbol} Первый стоп или изменение направления. Отменя и выставляем новый. Направление {Direction} цена = {EmaNowLocalEma} ");
+                            LastEmaValue = EmaNowLocalEma;
+                            //todo - заменить нулевые значения. Добавить в основной коннектор количество чисел после запятой
+                            CancelAndPlaceNewStopOrder(LastEmaValue, (int)NewPos, Direction,
+                                QuikConnector.DecimalsWithInstrument[Symbol], Portfolio);
+                        }*/
+
+                       // if (LastEmaValue != 0 && prevDirection == Direction || stoporder == null)
+                        {
+
+
+                            if ((Direction == Operation.Buy && EmaNowLocalEma > LastEmaValue) ||
+                                (Direction == Operation.Sell && LastEmaValue < LastEmaValue) || stoporder == null)
+                            {
+                                LogMessage(
+                                    $"Выставляю. Новый ={EmaNowLocalEma} Старый = {LastEmaValue}. Направление {Direction}");
+                                LastEmaValue = EmaNowLocalEma;
+
+                               await CancelAndPlaceNewStopOrder(LastEmaValue, (int)NewPos, OppositeDirection,
+                                    QuikConnector.DecimalsWithInstrument[Symbol], Portfolio);
+                            }
+                        }
+
+                    }
+                }
+            }).Start();
+
+        }
+
+        private bool stopplacingprocess = false;
+        // QuikConnector.PlaceStopOrder(PriceDelta, (int)newPos, Direction, SymbolWithPortfolio, QuikConnector.getDecimalCount(LastPrice));
+        private async Task CancelAndPlaceNewStopOrder(decimal price, int quantity, Operation operation,int numberRound,string clientcode)
+        {
+            stopplacingprocess = true;
+
             TryToFindAndCancelStopOrder();
-            QuikConnector.PlaceStopOrder(price, quantity, operation, Symbol, numberRound);
+            await QuikConnector.PlaceStopOrder(price, quantity, operation, Symbol, numberRound, clientcode, 
+                (decimal)PriceStep, classCode);
+
+            stopplacingprocess = false;
         }
         private void TryToFindAndCancelStopOrder()
         {
-            var stoporder = QuikConnector.ActiveStopOrders.FirstOrDefault(s => s.Value.SecCode == Symbol).Value;
+            var stoporder = QuikConnector.ActiveStopOrders.FirstOrDefault(s => s.Value.SecCode == Symbol && s.Value.ClientCode == Portfolio).Value;
 
             if (stoporder != null)
                 QuikConnector.CancelStopOrder(stoporder);
 
         }
+
 
         public void RefreshPosBot()
         {

@@ -1,5 +1,7 @@
-﻿using QuikSharp;
+﻿using DevExpress.DashboardWeb.Native;
+using QuikSharp;
 using QuikSharp.DataStructures;
+using QuikSharp.DataStructures.Transaction;
 using QuikTester.Helpers;
 using StockSharp.Algo.Indicators;
 using System;
@@ -48,8 +50,10 @@ namespace QuikTester
 
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
             _quikconnector = new Quik(34130, new InMemoryStorage(), "127.0.0.1");
-
-            _quikconnector.StopOrders.NewStopOrder += StopOrders_NewStopOrder;
+            
+            //_quikconnector.StopOrders.NewStopOrder+= StopOrders_NewStopOrder;
+           
+            _quikconnector.Events.OnStopOrder+= StopOrders_NewStopOrder;
 
             if (_quikconnector.IsServiceConnected())
             {
@@ -65,15 +69,14 @@ namespace QuikTester
                 GetStopOrders();
 
                 //2. включаем таймер который берет позиции по всем инструментам 
-                var timer = new Timer(10000);
+                var timer = new Timer(30000);
                 timer.Elapsed += (s, e) =>
-                {
-                    if (!inprocess)
-                        GetPositions();
+                { 
+                    GetPositions();
                 };
                 timer.Start();
 
-
+                GetPositions();
 
             }
         }
@@ -90,6 +93,10 @@ namespace QuikTester
 
         private async void GetPositions()
         {
+
+            if (inprocess)
+                return;
+            
             inprocess = true;
 
             //все позы со всех мест (акции, фьючи и так далее)
@@ -98,18 +105,23 @@ namespace QuikTester
             var allposes = new ConcurrentDictionary<string, decimal>();
 
             //отправляет не все позиции (фьючерсове нет) берем T2
-            var stockPositions = (await _quikconnector.Trading.GetDepoLimits()).Where(s => s.LimitKindInt == 2);
+            var stockPositions = ( await _quikconnector.Trading.GetDepoLimits()).Where(s => s.LimitKindInt == 2);
             foreach (var pos in stockPositions)
             {
-                allposes.TryAdd(pos.SecCode, pos.CurrentBalance);
+                if(pos.CurrentBalance!=0)
+                Debug.WriteLine($" инструмент =  {pos.SecCode}  + код = {pos.ClientCode} поза =  {pos.CurrentBalance}") ;
+
+                allposes.TryAdd(pos.SecCode +"|" + pos.ClientCode, pos.CurrentBalance);
             }
 
+            Debug.WriteLine($" ------------");
+
             //фьючерсы 
-            var futPositions = await _quikconnector.Trading.GetFuturesClientHoldings();
+            /*var futPositions = await _quikconnector.Trading.GetFuturesClientHoldings();
             foreach (var pos in futPositions)
             {
-                allposes.TryAdd(pos.secCode, (decimal)pos.totalNet);
-            }
+                allposes.TryAdd(pos.secCode + "|" + pos.trdAccId , (decimal)pos.totalNet);
+            }*/
 
             foreach (var pos in allposes)
             {
@@ -148,6 +160,7 @@ namespace QuikTester
                     }
 
                 }
+                LogMessage("-------------------------------");
             }
 
 
@@ -162,12 +175,39 @@ namespace QuikTester
         {
             LogMessage(
                 $"{stop.SecCode} обновление стоп {stop.ConditionPrice} направление {stop.Operation} номер {stop.OrderNum} {stop.State}");
+
             UpdateStopOrderState(stop);
         }
 
         public string Account { get; set; }
 
-        public void PlaceStopOrder(decimal ConditionalPrice, int quantity, Operation direction, string seccode, int roundNumbers)
+        public void SendTestOrder()
+        {
+           
+
+            _quikconnector.Trading.SendTransaction(new Transaction()
+            {
+                ACCOUNT = Account,
+                TYPE = TransactionType.M,
+                QUANTITY =1,
+                CLIENT_CODE = "7661mjy",
+                SECCODE = "AGRO",
+                CLASSCODE = "TBQR",
+                ACTION = TransactionAction.NEW_ORDER, 
+            });
+        }
+
+        public decimal GetPriceStep(string seccode)
+        {
+            Char separator = System.Globalization.CultureInfo.CurrentCulture.NumberFormat.NumberDecimalSeparator[0];
+
+            return Convert.ToDecimal(_quikconnector.Trading.GetParamEx
+                    (GetClassCodeForInsturment(seccode), seccode, "SEC_PRICE_STEP").
+                Result.ParamValue.Replace('.', separator));
+        }
+
+        public async Task PlaceStopOrder(decimal ConditionalPrice, int quantity, 
+            Operation direction, string seccode, int roundNumbers, string clientcode,decimal priceStep,string classCode)
         {
 
             decimal marketslippage = 0.1m;
@@ -176,33 +216,41 @@ namespace QuikTester
                 Math.Round(direction == Operation.Sell ? ConditionalPrice * (1 - marketslippage) : ConditionalPrice * (1 + marketslippage),
                     roundNumbers);
 
-            
+            Debug.WriteLine(DateTime.Now.ToString("H:mm:ss.fff") + " получаю степ");
 
-            Char separator = System.Globalization.CultureInfo.CurrentCulture.NumberFormat.NumberDecimalSeparator[0];
-            var priceStep = Convert.ToDecimal(_quikconnector.Trading.GetParamEx(GetClassCodeForInsturment(seccode), seccode, "SEC_PRICE_STEP").Result.ParamValue.Replace('.', separator));
-            
-            if(priceStep!=0)
+
+            Debug.WriteLine(DateTime.Now.ToString("H:mm:ss.fff") + " получен степ 1");
+
+            if (priceStep != 0)
             {
-            var rest = marketprice % priceStep;
-            marketprice -= rest;
+                var rest = marketprice % priceStep;
+                marketprice -= rest;
+
+                var rest2 = ConditionalPrice % priceStep;
+                ConditionalPrice -= rest2;
             }
+
+            var marketprice1 = Math.Round(marketprice, roundNumbers);
+            var conditionalprice1 = Math.Round(ConditionalPrice, roundNumbers);
 
             var stopOrder = new StopOrder()
             {
-                ConditionPrice = ConditionalPrice,
-                Price = marketprice,
+                ConditionPrice = conditionalprice1,
+                Price = marketprice1,
                 SecCode = seccode,
                 Quantity = quantity,
                 StopOrderType = StopOrderType.StopLimit,
                 Operation = direction,
+                ClientCode = clientcode
             };
 
             stopOrder.Account = Account;
-            stopOrder.ClassCode = GetClassCodeForInsturment(stopOrder.SecCode);
 
-            Debug.WriteLine($"Выставляем стоп {direction} Цена условия {ConditionalPrice} Цена срабатывания {marketprice}");
+            stopOrder.ClassCode = classCode;//GetClassCodeForInsturment(stopOrder.SecCode);
 
-            _quikconnector.StopOrders.CreateStopOrder(stopOrder);
+            Debug.WriteLine(DateTime.Now.ToString("H:mm:ss.fff") + $" Выставляем стоп {direction} Цена условия {conditionalprice1} Цена срабатывания {marketprice1}");
+
+            await _quikconnector.StopOrders.CreateStopOrder(stopOrder);
         }
 
         public void CancelStopOrder(StopOrder stopOrder)
@@ -288,7 +336,8 @@ namespace QuikTester
         /// </summary>
         private void GetStopOrders()
         {
-            var stoporders = _quikconnector.StopOrders.GetStopOrders().Result.Where(s => s.Comment.Contains("bot"));
+            //отключил так, как надо выставлять по разным инстурментам 
+            var stoporders = _quikconnector.StopOrders.GetStopOrders().Result;//.Where(s => s.Comment.Contains("bot"));
 
             if (stoporders != null)
                 foreach (var stop in stoporders)
@@ -349,7 +398,7 @@ namespace QuikTester
             stringclasses.Remove(0);
         }
 
-        private string GetClassCodeForInsturment(string code)
+        public string GetClassCodeForInsturment(string code)
         {
             return _quikconnector.Class.GetSecurityClass(stringclasses, code).Result;
         }

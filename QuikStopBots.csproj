@@ -12,9 +12,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\QUIKSharp-master\src\QuikSharp\QuikSharp.csproj">
-      <Private>True</Private>
-    </ProjectReference>
+    <ProjectReference Include="..\..\..\Downloads\QUIKSharp-feat_BreakingChanges_And_StopOrderFunctions\QUIKSharp-feat_BreakingChanges_And_StopOrderFunctions\src\QuikSharp\QuikSharp.csproj" />
   </ItemGroup>
 
   <ItemGroup>

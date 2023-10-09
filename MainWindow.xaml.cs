@@ -48,6 +48,8 @@ namespace QuikTester
             CandlesTypesComboBoxEditSettings.ItemsSource = Enum.GetNames(typeof(CandleInterval));
         }
 
+        private object updatingpos = new object();
+
         public MainWindow()
         {
             InitializeComponent();
@@ -72,7 +74,6 @@ namespace QuikTester
             {
                 Application.Current.Dispatcher.BeginInvoke(new Action(() =>
                 {
-
                     BotPositionsGrid.RefreshData();
                 }));
             };
@@ -80,53 +81,61 @@ namespace QuikTester
 
             QuikConnector.PositionsUpdate += (positions) =>
             {
-
-                //создаем список ботов исходя из позиций.. 
-                foreach (var pos in positions)
+                lock (updatingpos)
                 {
-                    var bot = _positionBots.FirstOrDefault(p => p.Symbol == pos.Key);
-                    if (bot == null)
+                    //создаем список ботов исходя из позиций.. 
+                    foreach (var pos in positions)
                     {
-                        bot = new PositionBot(QuikConnector)
-                        {
-                            Symbol = pos.Key,
-                            Activated = false,
+                        var split = pos.Key.Split('|');
 
-                            CandleInterval = CandleInterval.H1,
-                            EmaLength = 10,
-                        };
-                        bot.LogAction += LogMessage;
+                        var sec = split[0];
+                        var portfolio = split[1];
+
+                        var bot = _positionBots.FirstOrDefault(p => p.Symbol == sec && p.Portfolio == portfolio);
+
+                        if (bot == null)
+                        {
+                            bot = new PositionBot(QuikConnector)
+                            {
+                                Symbol = sec,
+                                Portfolio = portfolio,
+
+                                Activated = false,
+
+                                CandleInterval = CandleInterval.H1,
+                                EmaLength = 10,
+                            };
+                            bot.LogAction += LogMessage;
+
+                            Application.Current.Dispatcher.BeginInvoke(new Action(() =>
+                            {
+                                //BotPositionsGrid.RefreshData();
+                                _positionBots.Add(bot);
+                            }));
+
+                        }
+                        else
+                        {
+                            if (bot.QuikConnector == null)
+                                bot.QuikConnector = QuikConnector;
+
+                            if (bot.LogAction == null)
+                                bot.LogAction += LogMessage;
+
+                        }
 
                         Application.Current.Dispatcher.BeginInvoke(new Action(() =>
                         {
-                            //BotPositionsGrid.RefreshData();
-                            _positionBots.Add(bot);
+                            bot.UpdateCalculationsAndPositions(pos.Value);
                         }));
-
-                    }
-                    else
-                    {
-                        if (bot.QuikConnector == null)
-                            bot.QuikConnector = QuikConnector;
-
-                        if (bot.LogAction == null)
-                            bot.LogAction += LogMessage;
-
-
                     }
 
-                    Application.Current.Dispatcher.BeginInvoke(new Action(() =>
-                    {
-                        bot.UpdateCalculationsAndPositions(pos.Value);
-
-                    }));
+                    Helper.SaveXml(_positionBots);
                 }
 
-                Helper.SaveXml(_positionBots);
-
             };
-            QuikConnector.LogAction += LogMessage;
 
+            QuikConnector.LogAction += LogMessage;
             new Thread(() => { QuikConnector.Connect(); }).Start();
 
         }
@@ -201,6 +210,7 @@ namespace QuikTester
         bool active = false;
         private void StartCheck_Click(object sender, RoutedEventArgs e)
         {
+
             try
             {
                 if (!active)
@@ -240,6 +250,19 @@ namespace QuikTester
 
             if(bot!=null)
                 bot.RefreshPosBot();
+        }
+
+        private void CommandButtonInfo_OnClick(object sender, RoutedEventArgs e)
+        {
+            Application.Current.Dispatcher.BeginInvoke(new Action(() =>
+            {
+                lock (updatingpos)
+                {
+                    var pos = (PositionBot)BotPositionsGrid.SelectedItem;
+                    _positionBots.Remove(pos);
+                }
+
+            }));
         }
     }
 }

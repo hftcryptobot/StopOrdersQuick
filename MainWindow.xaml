@@ -11,7 +11,7 @@
 
         <Grid.RowDefinitions>
             <RowDefinition Height="50" />
-            <RowDefinition Height="200" />
+            <RowDefinition Height="270" />
             <RowDefinition />
         </Grid.RowDefinitions>
         
@@ -50,14 +50,16 @@
             <dxg:GridColumn FieldName="Started" Width="30" />
 
             <dxg:GridColumn FieldName="Symbol" Width="50" />
+            <dxg:GridColumn FieldName="Portfolio" Width="50" />
 
             <dxg:GridColumn FieldName="Direction" Width="50" ReadOnly="True"/>
 
-            <dxg:GridColumn FieldName="NewPos" Width="30" ReadOnly="True" >
+            <dxg:GridColumn FieldName="NewPos" Header ="Position" Width="30" ReadOnly="True" >
                 <dxg:GridColumn.EditSettings>
                     <dxe:TextEditSettings Mask="d" MaskType="Numeric" MaskUseAsDisplayFormat="True" />
                 </dxg:GridColumn.EditSettings>
             </dxg:GridColumn>
+
             <dxg:GridColumn FieldName="StrategyTypeString" Width="50" AllowEditing="True">
 
                 <dxg:GridColumn.EditSettings>
@@ -92,6 +94,18 @@
                         </dxe:ButtonEditSettings.Buttons>
                     </dxe:ButtonEditSettings>
                 </dxg:GridColumn.EditSettings>
+
+            </dxg:GridColumn>
+
+            <dxg:GridColumn Header="*" Width="20">
+                <dxg:GridColumn.EditSettings>
+                    <dxe:ButtonEditSettings AllowDefaultButton="False">
+                        <dxe:ButtonEditSettings.Buttons>
+                            <dxe:ButtonInfo GlyphKind="Cancel" Content="-" Click="CommandButtonInfo_OnClick" />
+                        </dxe:ButtonEditSettings.Buttons>
+                    </dxe:ButtonEditSettings>
+                </dxg:GridColumn.EditSettings>
+
             </dxg:GridColumn>
 
 
