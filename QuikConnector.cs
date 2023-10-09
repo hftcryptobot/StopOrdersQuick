@@ -20,7 +20,7 @@ namespace QuikTester
 
 
         bool firsttimeLoadForPositions = false;
-        private Quik _quikconnector;
+        public Quik _quikconnector;
 
         /// <summary>
         /// строчка из классов нужня для метода по соответствию кода и класса
@@ -69,10 +69,10 @@ namespace QuikTester
                 GetStopOrders();
 
                 //2. включаем таймер который берет позиции по всем инструментам 
-                var timer = new Timer(30000);
+                var timer = new Timer(10000);
                 timer.Elapsed += (s, e) =>
                 { 
-                    GetPositions();
+                  //  GetPositions();
                 };
                 timer.Start();
 
@@ -197,12 +197,12 @@ namespace QuikTester
             });
         }
 
-        public decimal GetPriceStep(string seccode)
+        public decimal GetPriceStep(string seccode, string classCode)
         {
             Char separator = System.Globalization.CultureInfo.CurrentCulture.NumberFormat.NumberDecimalSeparator[0];
 
             return Convert.ToDecimal(_quikconnector.Trading.GetParamEx
-                    (GetClassCodeForInsturment(seccode), seccode, "SEC_PRICE_STEP").
+                    (classCode, seccode, "SEC_PRICE_STEP").
                 Result.ParamValue.Replace('.', separator));
         }
 
@@ -285,6 +285,14 @@ namespace QuikTester
             }
         }
 
+        public async Task SubScibeForCandles()
+        {
+           // _quikconnector.Candles.
+            
+          //  _quikconnector.Candles.Subscribe()
+
+        }
+
         /// <summary>
         /// Метод отдает либо последнюю свечку (что является последней ценой)
         /// либо считает EMA 
@@ -299,8 +307,8 @@ namespace QuikTester
             CandleInterval candleInterval = CandleInterval.D1, int _length = 0)
         {
 
-
-            var candles = await _quikconnector.Candles.GetAllCandles(GetClassCodeForInsturment(posbot.Symbol),
+            
+            var candles = await _quikconnector.Candles.GetAllCandles(posbot.classCode,
                 posbot.Symbol, candleInterval);
 
             //вместе с этим запросом сразу обновляем количество чисел после запятой

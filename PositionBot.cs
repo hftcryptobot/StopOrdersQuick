@@ -1,6 +1,8 @@
 ﻿using QuikSharp.DataStructures;
 using QuikTester.Helpers;
+using StockSharp.Algo.Indicators;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
@@ -88,11 +90,13 @@ namespace QuikTester
 
         public QuikConnector QuikConnector { get; set; }
 
+        [DataMember]
         public decimal ?PriceStep { get; set; }
 
+        [DataMember]
         public string ?classCode { get; set; }
 
-
+        private ExponentialMovingAverage EMA { get; set; }
 
         private StrategyType _strategyType;
 
@@ -129,6 +133,12 @@ namespace QuikTester
                 if (_started != value && value)
                 {
                     MainAlgo();
+                }
+
+                if (_started != value && !value)
+                {
+                    //остановка 
+                    TryToFindAndCancelStopOrder();
                 }
 
                 _started = value;
@@ -211,19 +221,44 @@ namespace QuikTester
         [DataMember]
         public CandleInterval CandleInterval { get; set; }
 
+        
+
         public string CandleIntervalString
         {
             get => CandleInterval.ToString();
             set
             {
                 Enum.TryParse<CandleInterval>(value, out var result);
+
+                if (result != CandleInterval)
+                {
+                    //поменялось значение и следовательно надо подписку остановить также... 
+
+                }
+
                 CandleInterval = result;
             }
         }
-        
-        [DataMember]
-        public int EmaLength { get; set; }
 
+         private int _emaLength;
+
+
+        [DataMember]
+        public int EmaLength
+        {
+            get => _emaLength;
+            set
+            {
+                if (value != _emaLength)
+                {
+                    //новое значение, значит обнуляем индикатор и строим заново... 
+                    EMA = null;
+                }
+
+                _emaLength = value;
+                PropertyEvent(nameof(EmaLength));
+            }
+        }
 
         /// <summary>
         /// По умолчанию ставлю на покупку направление
@@ -256,8 +291,6 @@ namespace QuikTester
         public async void UpdateCalculationsAndPositions(decimal newPos)
         {
 
-           
-
             //для быстрого обновления графики 
             NewPos = newPos;
 
@@ -270,19 +303,13 @@ namespace QuikTester
             new Task(async () =>
             {
 
-                if (PriceStep == null)
-                {
-                    PriceStep = QuikConnector.GetPriceStep(Symbol);
-                    LogMessage($"Получен шаг цены для {Symbol} -> {PriceStep}");
-                }
-
-                if (classCode == null)
-                {
-                    classCode = QuikConnector.GetClassCodeForInsturment(Symbol);
-                    LogMessage($"Получен класс инструмента для {Symbol} -> {classCode}");
-                }
+                GetInitialSettings();
 
                 //----------- решил сделать калькуляцию параметров вне зависимости от того запущена или нет ----- 
+
+                //  var signalEma = new ExponentialMovingAverage() { Length = _length };
+
+
 
                 if (StrategyType == StrategyType.ValueDiff)
                 {
@@ -321,6 +348,51 @@ namespace QuikTester
 
            }).Start();
         }
+
+
+        private void ReSubscribe( CandleInterval oldCandleInterval, CandleInterval newCandleInterval)
+        {
+            try
+            {
+                if (oldCandleInterval != null)
+                    QuikConnector._quikconnector.Candles.Unsubscribe(classCode, Symbol, oldCandleInterval);
+            }
+            catch (Exception ex)
+            {
+                //на случай если произойдет не айс 
+            }
+
+
+            EMA = null;
+            EMA = new ExponentialMovingAverage() { Length = EmaLength };
+
+
+
+
+        }
+
+        public void ProcessCandle()
+        {
+
+        }
+
+        private void GetInitialSettings()
+        {
+            if (classCode == null)
+            {
+                classCode = QuikConnector.GetClassCodeForInsturment(Symbol);
+                LogMessage($"Получен класс инструмента для {Symbol} -> {classCode}");
+            }
+
+            if (PriceStep == null)
+            {
+                PriceStep = QuikConnector.GetPriceStep(Symbol, classCode);
+                LogMessage($"Получен шаг цены для {Symbol} -> {PriceStep}");
+            }
+
+           
+        }
+
 
         private void MainAlgo()
         {
@@ -432,10 +504,19 @@ namespace QuikTester
         }
         private void TryToFindAndCancelStopOrder()
         {
-            var stoporder = QuikConnector.ActiveStopOrders.FirstOrDefault(s => s.Value.SecCode == Symbol && s.Value.ClientCode == Portfolio).Value;
+            try
+            {
 
-            if (stoporder != null)
-                QuikConnector.CancelStopOrder(stoporder);
+                var stoporder = QuikConnector.ActiveStopOrders
+                    .FirstOrDefault(s => s.Value.SecCode == Symbol && s.Value.ClientCode == Portfolio).Value;
+
+                if (stoporder != null)
+                    QuikConnector.CancelStopOrder(stoporder);
+            }
+            catch (Exception ex)
+            {
+                LogMessage(ex.Message);
+            }
 
         }
 
